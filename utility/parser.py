@@ -1,0 +1,36 @@
+import argparse
+
+def parse_args():
+    parse = argparse.ArgumentParser(description="Run Reproduct")
+    parse.add_argument('--seed', type=int, default=2025, help='random seed')
+    parse.add_argument('--gpu', type=int, default=0, help='indicates which gpu to use')
+    parse.add_argument('--cuda', type=bool, default=True, help='use gpu or not')
+    parse.add_argument('--log', type=str, default='None', help='init log file name')
+    parse.add_argument('--dataset_path', type=str, default='./dataset/', help='choice dataset')
+    parse.add_argument('--dataset_type', type=str, default='.txt', help='choice dataset')
+    parse.add_argument('--dataset', type=str, default='movielens-1m', help='choice dataset')
+    parse.add_argument('--top_K', type=str, default='[5, 10, 20]')
+    parse.add_argument('--train_epoch', type=int, default=600)
+    parse.add_argument('--critique_round_num', type=int, default=5)
+    parse.add_argument('--critique_epoch', type=int, default=12)
+    parse.add_argument('--early_stop', type=int, default=10)
+    parse.add_argument('--embedding_size', type=int, default=64)
+    parse.add_argument('--train_batch_size', type=int, default=2048)
+    parse.add_argument('--test_batch_size', type=int, default=2048)
+    parse.add_argument('--learn_rate', type=float, default=0.002)
+    parse.add_argument('--critique_rate', type=float, default=0.002)
+    parse.add_argument('--reg_lambda', type=float, default=0.0001)
+    parse.add_argument('--gcn_layer', type=int, default=3)
+    parse.add_argument('--test_frequency', type=int, default=1)
+    parse.add_argument('--sparsity_test', type=int, default=0)
+    parse.add_argument('--tau', type=float, default=0.28)
+    parse.add_argument('--ssl_lambda', type=float, default=5.0)
+    parse.add_argument('--encoder', type=str, default='MF')
+    
+    parse.add_argument('--num_bpr_neg', type=int, default=10)
+    parse.add_argument('--num_cl_neg', type=int, default=1000)
+    parse.add_argument('--critique_cl_lambda', type=float, default=1.0)
+    parse.add_argument('--lambda_cf', type=float, default=0.8)
+
+
+    return parse.parse_args()
