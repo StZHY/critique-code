@@ -1,3 +1,4 @@
+"""Evaluation: Recall/NDCG/HitRate@K over test users, plus sparsity-split and group evaluation."""
 import numpy as np
 import torch
 import utility.tools as tools
@@ -56,6 +57,51 @@ def testing(model, args, dataset, device):
         model_results['ndcg'] /= float(len(test_users))
         model_results['hitrate'] /= float(len(test_users))
 
+        return model_results
+
+def testing_on(model, args, dataset, device, eval_dict, exclude_dict=None, tag=""):
+    """Evaluate recall/ndcg/hitrate on eval_dict, excluding known positives in exclude_dict.
+    Use cases: val early stopping (eval=val, exclude=train); final test (eval=test, exclude=train+val)."""
+    model = model.eval()
+    topK = eval(args.top_K)
+    model_results = {'recall': np.zeros(len(topK)), 'ndcg': np.zeros(len(topK)), 'hitrate': np.zeros(len(topK))}
+    if exclude_dict is None:
+        exclude_dict = {}
+    with torch.no_grad():
+        test_users = list(eval_dict.keys())
+        if len(test_users) == 0:
+            return model_results
+        user_list, true_list, rating_list = [], [], []
+        num_batch = len(test_users) // int(args.test_batch_size) + 1
+        for batch_users in tools.mini_batch(test_users, batch_size=int(args.test_batch_size)):
+            exclude_users, exclude_items = [], []
+            eval_batch_pos = [eval_dict[u] for u in batch_users]
+            for i, u in enumerate(batch_users):
+                if u in exclude_dict:
+                    exclude_users.extend([i] * len(exclude_dict[u]))
+                    exclude_items.extend(exclude_dict[u])
+            batch_users_device = torch.Tensor(batch_users).long().to(device)
+            rating = model.get_rating_for_test(batch_users_device)
+            rating[exclude_users, exclude_items] = -1
+            _, rating_k = torch.topk(rating, k=max(topK))
+            rating = rating.cpu()
+            del rating
+            user_list.append(batch_users)
+            rating_list.append(rating_k.cpu())
+            true_list.append(eval_batch_pos)
+        assert num_batch == len(user_list)
+        enum_list = zip(rating_list, true_list)
+        results = []
+        for single_list in enum_list:
+            results.append(test_single_batch(single_list, topK))
+        for result in results:
+            model_results['recall'] += result['recall']
+            model_results['ndcg'] += result['ndcg']
+            model_results['hitrate'] += result['hitrate']
+        model_results['recall'] /= float(len(test_users))
+        model_results['ndcg'] /= float(len(test_users))
+        model_results['hitrate'] /= float(len(test_users))
+        print(f"\t [{tag}] recall={model_results['recall']}, ndcg={model_results['ndcg']}")
         return model_results
 
 def testing_100(model, args, dataset, device):
@@ -192,7 +238,7 @@ def pred_to_label(pred_items, true_items):
         true_item = true_items[i]
         pred_item = pred_items[i]
 
-        pred = list(map(lambda x: x in true_item, pred_item)) 
+        pred = list(map(lambda x: x in true_item, pred_item))
 
         pred = np.array(pred).astype("float")
 
@@ -207,16 +253,7 @@ def recall_k(pred, k_size, true):
     return recall
 
 def hitrate_k(pred, k_size):
-    """
-    Calculates the Hit Rate at k.
-    
-    Args:
-        pred (np.ndarray): A binary NumPy array where 1 indicates a hit and 0 indicates a miss.
-        k_size (int): The number of top recommendations to consider.
-        
-    Returns:
-        float: The Hit Rate at k.
-    """
+    """Hit Rate at k: 1 if any hit in the top-k, else 0, summed over users."""
     pred_k = pred[:, :k_size]
     hit_at_k = (pred_k.sum(axis=1) > 0).astype(int)
     return np.sum(hit_at_k)

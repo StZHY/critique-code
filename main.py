@@ -1,3 +1,4 @@
+"""Backbone training entry point for LightCCF."""
 import torch
 import logging
 from datetime import datetime

@@ -1,0 +1,9 @@
+# CritiCF dependencies (Python 3.10).
+# The LLM-interface scripts use only the Python standard library (urllib).
+torch>=1.13.1
+numpy
+scipy
+networkx
+prettytable
+tqdm
+pandas

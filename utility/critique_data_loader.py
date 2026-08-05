@@ -1,3 +1,5 @@
+"""Dataset loader: train/test interactions + per-round critique pos/neg signals."""
+import os
 import random
 
 import scipy.sparse as sp
@@ -11,7 +13,7 @@ class Data(object):
         self.num_items = 0
         self.num_nodes = 0
         self.load_data_and_create_sp()
-        if int(args.sparsity_test) == 1: 
+        if int(args.sparsity_test) == 1:
             self.split_test_dict, self.split_state = self.create_sparsity_split()
 
     def load_data_and_create_sp(self):
@@ -19,33 +21,31 @@ class Data(object):
         test_path = self.path + "/test" + self.filetype
 
         self.unique_train_users, self.train_users, self.train_items, self.train_pos_len, self.train_num_inter, self.train_dict = self.read_file(train_path)
-        self.unique_test_users,  self.test_users,  self.test_items,  self.test_pos_len,  self.test_num_inter, self.test_dict = self.read_file(test_path)
+        self.unique_test_users,  self.test_users,  self.test_items,  self.test_pos_len,  self.test_num_inter,  self.test_dict = self.read_file(test_path)
         assert len(self.train_users) == len(self.train_items)
 
+        # IDs are 0-indexed, so max ID + 1 gives the count
         self.num_users += 1
         self.num_items += 1
-        self.num_nodes = self.num_users + self.num_items 
+        self.num_nodes = self.num_users + self.num_items
 
+        # Build the user-item interaction matrix (U*I) in COO format
         self.train_mat = sp.coo_matrix((np.ones(len(self.train_users)), (self.train_users, self.train_items)), shape=[self.num_users, self.num_items])
-        self.test_mat  = sp.coo_matrix((np.ones(len(self.test_users)),  (self.test_users, self.test_items)),   shape=[self.num_users, self.num_items])
-
+        self.test_mat  = sp.coo_matrix((np.ones(len(self.test_users)),  (self.test_users,  self.test_items)),   shape=[self.num_users, self.num_items])
 
         self.all_positive = self.get_user_pos_items(list(range(self.num_users)))
-        
+
 
     def read_file(self, file_name):
-
         inter_users, inter_items, unique_user, user_dict = [], [], [], {}
-
         pos_length = []
-
         num_inter = 0
         with open(file_name, "r") as f:
             line = f.readline()
             while line is not None and line != "":
                 temp = line.strip()
                 arr = [int(i) for i in temp.split(" ")]
-                user_id, pos_id = arr[0], arr[1:]
+                user_id, pos_id = arr[0], arr[1:] # first column is user_id, rest are item ids
 
                 self.num_users = max(self.num_users, user_id)
                 self.num_items = max(self.num_items, max(pos_id))
@@ -65,41 +65,80 @@ class Data(object):
                         user_dict[user_id].append(pos_id[i])
 
                 line = f.readline()
-
         return np.array(unique_user), np.array(inter_users), np.array(inter_items), pos_length, num_inter, user_dict
 
     def load_critique_data(self, round_num):
-        neg_train_path = self.path + "/critique_round/train_"+ round_num + self.filetype
-        neg_train_score_path = self.path + "/critique_round/train_"+ round_num + "_scores" + self.filetype
+        # critique_round dir: prefer args.critique_round_path, else fall back to dataset dir/critique_round/.
+        critique_dir = getattr(self.args, 'critique_round_path', None) or (self.path + "/critique_round")
+        # dislike anchor -> test_{r}_neg.txt; like anchor -> test_{r}_pos.txt
+        neg_train_path = os.path.join(critique_dir, "test_" + round_num + "_neg" + self.filetype)
+        neg_train_score_path = os.path.join(critique_dir, "test_" + round_num + "_neg_scores" + self.filetype)
+        pos_train_path = os.path.join(critique_dir, "test_" + round_num + "_pos" + self.filetype)
+        pos_train_score_path = os.path.join(critique_dir, "test_" + round_num + "_pos_scores" + self.filetype)
 
-        self.neg_train_users, self.neg_train_items, self.neg_train_dict = self.read_neg_file(neg_train_path, neg_train_score_path)
+        self.neg_train_users, self.neg_train_items, self.neg_train_dict = self.read_critique_file(neg_train_path, neg_train_score_path, "neg")
+        self.pos_train_users, self.pos_train_items, self.pos_train_dict = self.read_critique_file(pos_train_path, pos_train_score_path, "pos")
+
+    def read_critique_file(self, id_file_name, score_file_name, tag="neg"):
+        """Generic critique reader (neg/pos share one format: user_id item1 item2 ... / user_id score1 score2 ...).
+        tag selects the dict keys: 'neg' -> {neg_ids,neg_scores}; 'pos' -> {pos_ids,pos_scores}. Missing files => empty."""
+        id_key = tag + "_ids"
+        sc_key = tag + "_scores"
+        inter_users, inter_items, user_dict = [], [], {}
+
+        if not (os.path.exists(id_file_name) and os.path.exists(score_file_name)):
+            return np.array(inter_users), np.array(inter_items), user_dict
+
+        with open(id_file_name, "r", encoding="utf-8") as id_f, \
+             open(score_file_name, "r", encoding="utf-8") as score_f:
+            while True:
+                id_line = id_f.readline()
+                score_line = score_f.readline()
+                if not id_line or not score_line:
+                    break
+                id_parts = id_line.strip().split(" ")
+                user_id = int(id_parts[0])
+                ids = [int(i) for i in id_parts[1:]]
+                score_parts = score_line.strip().split(" ")
+                if int(score_parts[0]) != user_id:
+                    print(f"警告: 用户ID在ID文件和得分文件中不匹配，用户ID: {user_id}")
+                    continue
+                scores = [float(s) for s in score_parts[1:]]
+                if len(ids) != len(scores):
+                    print(f"警告: 用户 {user_id} 的物品ID和得分数量不匹配，跳过。")
+                    continue
+                inter_users.extend([user_id] * len(ids))
+                inter_items.extend(ids)
+                user_dict[user_id] = {id_key: ids, sc_key: scores}
+
+        return np.array(inter_users), np.array(inter_items), user_dict
 
     def read_neg_file(self, id_file_name, score_file_name):
-
+        """Read a neg file: returns user list, item list, and a user->item dict (neg_ids/neg_scores)."""
         inter_users, inter_items, user_dict = [], [], {}
-        
+
         with open(id_file_name, "r", encoding="utf-8") as id_f, \
             open(score_file_name, "r", encoding="utf-8") as score_f:
-                
-            while True:
 
+            while True:
                 id_line = id_f.readline()
                 score_line = score_f.readline()
 
                 if not id_line or not score_line:
                     break
-                    
+
                 id_parts = id_line.strip().split(" ")
                 user_id = int(id_parts[0])
                 neg_ids = [int(i) for i in id_parts[1:]]
 
                 score_parts = score_line.strip().split(" ")
-
                 if int(score_parts[0]) != user_id:
+                    print(f"警告: 用户ID在ID文件和得分文件中不匹配，用户ID: {user_id}")
                     continue
                 neg_scores = [float(s) for s in score_parts[1:]]
 
                 if len(neg_ids) != len(neg_scores):
+                    print(f"警告: 用户 {user_id} 的电影ID和得分数量不匹配，跳过。")
                     continue
 
                 inter_users.extend([user_id] * len(neg_ids))
@@ -109,9 +148,9 @@ class Data(object):
                         "neg_ids": neg_ids,
                         "neg_scores": neg_scores
                     }
-        
+
         return np.array(inter_users), np.array(inter_items), user_dict
-    
+
     def random_create_user_pos_neg(self):
         pairs = []
 
@@ -128,34 +167,36 @@ class Data(object):
                     break
             pairs.append([user, pos_item, neg_item])
         return np.array(pairs)
-    
-    def create_user_pos_neg_pairs(self):
 
-        pairs = [] 
+    def create_user_pos_neg_pairs(self):
+        """Match each neg item with a corresponding pos item (the mean anchor)."""
+        pairs = []
 
         for i in range(len(self.neg_train_users)):
             user = self.neg_train_users[i]
             neg_item = int(self.neg_train_items[i])
-            
+
             pos_item = int(user) + self.num_items
 
             pairs.append([user, pos_item, neg_item])
-            
+
         return np.array(pairs)
-    
+
     def create_u_pos_pairs(self):
-
+        """Generate (user, CL positive anchor) pairs for all users participating this round.
+        Round participants = neg_train_dict | pos_train_dict (a user is in exactly one per round).
+        CL positive anchor = user_id + num_items (mean of the user's train-positive item embeddings)."""
         hybrid_pairs = []
+        pos_dict = getattr(self, 'pos_train_dict', {})
+        user_set = set(self.neg_train_dict.keys()) | set(pos_dict.keys())
 
-        for user in self.neg_train_dict:
-            
+        for user in user_set:
             pos_item = int(user) + self.num_items
-
             hybrid_pairs.append([user, pos_item])
 
         return np.array(hybrid_pairs)
-    
-    
+
+
     def random_create_user_pos_neg_cl(self):
         pairs = []
         for i in range(len(self.train_users)):
@@ -206,13 +247,14 @@ class Data(object):
             adjacency_matrix = sp.dok_matrix((self.num_nodes, self.num_nodes), dtype=np.float32)
             adjacency_matrix = adjacency_matrix.tolil()
             R = self.train_mat.todok()
-
             adjacency_matrix[:self.num_users, self.num_users:] = R
             adjacency_matrix[self.num_users:, :self.num_users] = R.T
 
+            # add self
             adjacency_matrix = adjacency_matrix.todok()
             adjacency_matrix = adjacency_matrix + sp.eye(adjacency_matrix.shape[0])
 
+            # A_hat = D^(-1/2) A D(-1/2)
             row_sum = np.array(adjacency_matrix.sum(axis=1))
             d_inv = np.power(row_sum, -0.5).flatten()
             d_inv[np.isinf(d_inv)] = 0.
@@ -244,6 +286,7 @@ class Data(object):
         temp = []
         count = 1
         fold = 3
+#         fold = 4
         n_count = self.train_num_inter + self.test_num_inter
         n_rates = 0
         split_state = []
@@ -270,11 +313,9 @@ class Data(object):
 
         return split_uids, split_state
     def get_user_pos_items(self, users):
-
+        # CSR format enables fast per-row access to a user's interacted items.
         self.train_mat_csr = self.train_mat.tocsr()
-
         positive_items = []
         for user in users:
             positive_items.append(self.train_mat_csr[user].nonzero()[1])
-
         return positive_items

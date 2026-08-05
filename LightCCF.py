@@ -1,3 +1,4 @@
+"""LightCCF backbone model and its Trainer."""
 import torch
 from torch import nn
 import utility.trainer as trainer

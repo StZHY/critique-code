@@ -1,0 +1,13 @@
+# Datasets and model artifacts are NOT distributed with this code.
+dataset/
+prepare_for_LLM/
+model_save/
+results/
+experiments/
+log/
+logs/
+figure_drafts/
+__pycache__/
+*.pyc
+*.pth
+*.npz
