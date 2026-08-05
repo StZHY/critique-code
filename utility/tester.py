@@ -38,7 +38,6 @@ def testing(model, args, dataset, device):
             user_list.append(batch_users)
             rating_list.append(rating_k.cpu())
             true_list.append(test_batch_pos)
-        # batch finish, calculate recall and ndcg
         assert num_batch == len(user_list)
 
         enum_list = zip(rating_list, true_list)
@@ -60,8 +59,7 @@ def testing(model, args, dataset, device):
         return model_results
 
 def testing_on(model, args, dataset, device, eval_dict, exclude_dict=None, tag=""):
-    """Evaluate recall/ndcg/hitrate on eval_dict, excluding known positives in exclude_dict.
-    Use cases: val early stopping (eval=val, exclude=train); final test (eval=test, exclude=train+val)."""
+    """Evaluate recall/ndcg/hitrate on eval_dict, excluding known positives in exclude_dict."""
     model = model.eval()
     topK = eval(args.top_K)
     model_results = {'recall': np.zeros(len(topK)), 'ndcg': np.zeros(len(topK)), 'hitrate': np.zeros(len(topK))}
@@ -139,7 +137,6 @@ def testing_100(model, args, dataset, device):
             user_list.append(batch_users)
             rating_list.append(rating_k.cpu())
             true_list.append(test_batch_pos)
-        # batch finish, calculate recall and ndcg
         assert num_batch == len(user_list)
 
         enum_list = zip(rating_list, true_list)
@@ -153,7 +150,6 @@ def testing_100(model, args, dataset, device):
             model_results['recall'] += result['recall']
             model_results['ndcg'] += result['ndcg']
             model_results['hitrate'] += result['hitrate']
-            #print('\t Steps %d/%d: recall = %.3f, ndcg = %.3f, hitrate = %.3f' % (i, num_batch, float(result['recall'][1]), float(result['ndcg'][1]), float(result['hitrate'][1])), end='\r')
         model_results['recall'] /= float(len(test_users))
         model_results['ndcg'] /= float(len(test_users))
         model_results['hitrate'] /= float(len(test_users))
@@ -175,7 +171,6 @@ def testing_group(model, args, dataset, device, my_dicts):
         for batch_users in tools.mini_batch(test_users, batch_size=int(args.test_batch_size)):
             exclude_users, exclude_items = [], []
 
-            # pair(train_batch_user, train_batch_pos)
             test_batch_pos = [my_dicts[u] for u in batch_users]
 
             for i, u in enumerate(batch_users):
@@ -183,13 +178,10 @@ def testing_group(model, args, dataset, device, my_dicts):
                 exclude_items.extend(dataset.train_dict[u])
             batch_users_device = torch.Tensor(batch_users).long().to(device)
 
-            # model func to calculate the score
             rating = model.get_rating_for_test(batch_users_device)
-            # print(batch_users)
 
             rating[exclude_users, exclude_items] = -1
 
-            # topk return values, indices
             _, rating_k = torch.topk(rating, k=max(topK))
 
             rating = rating.cpu()
@@ -198,7 +190,6 @@ def testing_group(model, args, dataset, device, my_dicts):
             user_list.append(batch_users)
             rating_list.append(rating_k.cpu())
             true_list.append(test_batch_pos)
-        # batch finish, calculate recall and ndcg
         assert num_batch == len(user_list)
 
         enum_list = zip(rating_list, true_list)
@@ -206,7 +197,6 @@ def testing_group(model, args, dataset, device, my_dicts):
         for single_list in enum_list:
             results.append(test_single_batch(single_list, topK))
 
-        # i = 0
         for result in results:
             i += 1
             model_results['recall'] += result['recall']
@@ -242,7 +232,7 @@ def pred_to_label(pred_items, true_items):
 
         pred = np.array(pred).astype("float")
 
-        pred_item_label.append(pred) # [True, False, True, ...]
+        pred_item_label.append(pred)
 
     return np.array(pred_item_label).astype("float")
 
@@ -278,15 +268,12 @@ def ndcg_k(pred, k_size, true):
 def sparsity_test(dataset, args, model, device):
     sparsity_results = []
     model = model.eval()
-    # top-20, 40, ..., 100
     topK = eval(args.top_K)
 
     with torch.no_grad():
         for users in dataset.split_test_dict:
             model_results = {
-                # 'precision': np.zeros(len(topK)),
                 'recall': np.zeros(len(topK)),
-                # 'hit': np.zeros(len(topK)),
                 'ndcg': np.zeros(len(topK))
             }
             users_list, rating_list, ground_true_list = [], [], []
@@ -301,14 +288,12 @@ def sparsity_test(dataset, args, model, device):
 
                 rating = model.get_rating_for_test(batch_users_device)
 
-                # Positive items are excluded from the recommended list
                 for i, items in enumerate(all_positive):
                     exclude_users.extend([i] * len(items))
                     exclude_items.extend(items)
 
                 rating[exclude_users, exclude_items] = -1
 
-                # get the top-K recommended list for all users
                 _, rating_k = torch.topk(rating, k=max(topK))
 
                 rating = rating.cpu()
@@ -327,11 +312,9 @@ def sparsity_test(dataset, args, model, device):
 
             for result in results:
                 model_results['recall'] += result['recall']
-                # model_results['precision'] += result['precision']
                 model_results['ndcg'] += result['ndcg']
 
             model_results['recall'] /= float(len(users))
-            # model_results['precision'] /= float(len(users))
             model_results['ndcg'] /= float(len(users))
             sparsity_results.append(model_results)
 

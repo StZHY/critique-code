@@ -38,19 +38,7 @@ def mini_batch(*arrays, **kwargs):
             yield tuple(array[i: i+batch_size] for array in arrays)
 
 def cri_mini_batch(data_list, batch_size=2048):
-    """mini_batch for heterogeneous data from create_hybrid_pairs.
-
-    Shuffles the data and yields batched tensors, each containing
-    (user, positive item, bpr negative item list, cl negative item list).
-
-    Args:
-        data_list (list): list of data points, each a tuple/list like
-                          [user, pos_item, bpr_neg_list, cl_neg_list].
-        batch_size (int): mini-batch size.
-
-    Yields:
-        tuple: (users, pos_items, bpr_neg_items, cl_neg_items) as LongTensors.
-    """
+    """Mini-batch for heterogeneous data from create_hybrid_pairs; yields (users, pos_items, bpr_neg_items, cl_neg_items) as LongTensors."""
     num_data = len(data_list)
     indices = list(range(num_data))
     random.shuffle(indices)

@@ -83,7 +83,7 @@ def simple_sample_bpr_neg_items(model, args, dataset, device):
             neg_ids = data['neg_ids']
             neg_scores = data['neg_scores']
             if not neg_ids:
-                print(f"警告: 用户 {user_id} 没有负样本，跳过采样。")
+                print(f"Warning: user {user_id} has no negative samples, skipping sampling.")
                 continue
             neg_ids_tensor = torch.tensor(neg_ids, dtype=torch.long, device=device)
             neg_scores_tensor = torch.tensor(neg_scores, dtype=torch.float, device=device)
@@ -116,7 +116,7 @@ def weight_sample_bpr_neg_items(model, args, dataset, device):
             neg_ids = data['neg_ids']
             neg_scores = data['neg_scores']
             if not neg_ids:
-                print(f"警告: 用户 {user_id} 没有负样本，跳过采样。")
+                print(f"Warning: user {user_id} has no negative samples, skipping sampling.")
                 continue
             neg_ids_tensor = torch.tensor(neg_ids, dtype=torch.long, device=device)
             neg_scores_tensor = torch.tensor(neg_scores, dtype=torch.float, device=device)
@@ -193,9 +193,7 @@ def sample_pos_pool(args, dataset, device, max_pool=30):
 
 
 def sample_critique_pool(args, dataset, device, max_pool=None):
-    """Unified per-user critique pool (pos|neg) with sign-coded s_L (pos->+score / neg->-score).
-    Merging pos_train_dict and neg_train_dict and negating the neg scores gives a single continuous
-    preference signal in [-1,1]. padding = item 0 + score 0 (masked out in the loss via (scores!=0))."""
+    """Unified per-user critique pool (pos|neg) with sign-coded s_L (pos->+score / neg->-score); padding masked via (scores!=0)."""
     if max_pool is None:
         max_pool = int(getattr(args, 'rllm_pool_size', 60))
     num_users = dataset.num_users
@@ -222,8 +220,7 @@ def sample_critique_pool(args, dataset, device, max_pool=None):
     return pool_ids, pool_scores
 
 def sample_cri_neg_cl(args, dataset, device, Kc=None):
-    """s_L-margin CER B- bucket: sample Kc LLM dislikes per user, return ids + g=sigma(gamma*ell).
-    Only neg_train_dict dislikes are used; padding = item 0 + g=0 (masked out via (g>0) in the loss)."""
+    """s_L-margin CER B- bucket: sample Kc LLM dislikes per user, return ids + g=sigma(gamma*ell)."""
     if Kc is None:
         Kc = int(getattr(args, 'cer_cri_neg_k', 20))
     gamma = float(getattr(args, 'cer_gamma', 1.0))
@@ -259,13 +256,13 @@ def _sample_cl_neg_items_legacy(args, dataset, device, history_bpr_neg):
         all_items_list = all_items.tolist()
         non_history_items = [item for item in all_items_list if item not in user_history_set]
         if not non_history_items:
-            print(f"警告: 用户 {user} 没有可供随机采样的非历史电影，跳过随机采样。")
+            print(f"Warning: user {user} has no non-history movies available for random sampling, skipping random sampling.")
             rand_sampled_items = []
         else:
             rand_sampled_items = np.random.choice(non_history_items, size=num_rand_neg, replace=True)
         bpr_history = history_bpr_neg.get(user, [])
         if not bpr_history:
-            print(f"警告: 用户 {user} 没有BPR历史样本，跳过BPR采样。")
+            print(f"Warning: user {user} has no BPR history samples, skipping BPR sampling.")
             bpr_sampled_items = []
         else:
             weights = 1 / (np.arange(len(bpr_history)) + 1)
@@ -280,11 +277,7 @@ def _sample_cl_neg_items_legacy(args, dataset, device, history_bpr_neg):
 
 
 def sample_cl_neg_items(args, dataset, device, history_bpr_neg):
-    """CER (v2 §2.6) contrastive negative sampling: Bref (random) | B- (past-critique = bpr_history).
-    Default (both flags off) -> legacy (99% random + 1% bpr_history), byte-identical. D-2 three-bucket
-    ablation (EXP-A05) is controlled here:
-      --no_cer_random_ref      => B- only (drop random reference); backfill random if B- insufficient.
-      --no_cer_critique_replay => Bref only (drop past-critique)."""
+    """CER contrastive negative sampling: Bref (random) | B- (past-critique); default legacy, D-2 ablation via no_cer_* flags."""
     no_ref = bool(getattr(args, 'no_cer_random_ref', False))
     no_crit = bool(getattr(args, 'no_cer_critique_replay', False))
     if not no_ref and not no_crit:
@@ -299,10 +292,9 @@ def sample_cl_neg_items(args, dataset, device, history_bpr_neg):
     pos_dict = getattr(dataset, 'pos_train_dict', {})
     user_set = set(dataset.neg_train_dict.keys()) | set(pos_dict.keys())
 
-    # Target bucket quota: no_ref -> all B-; no_crit -> all Bref; both on -> degenerate, fall back to all random.
-    want_bpr = (not no_crit) and no_ref       # past-critique only
-    want_rand = (not no_ref) and no_crit      # random only
-    if no_ref and no_crit:                    # both buckets off = degenerate
+    want_bpr = (not no_crit) and no_ref
+    want_rand = (not no_ref) and no_crit
+    if no_ref and no_crit:
         want_rand, want_bpr = True, False
 
     for user in user_set:
@@ -320,12 +312,11 @@ def sample_cl_neg_items(args, dataset, device, history_bpr_neg):
                 weights = weights / np.sum(weights)
                 bpr_sampled = list(np.random.choice(bpr_history, size=num_cl_neg, replace=True, p=weights))
             else:
-                # User has no past-critique (e.g. round 0): backfill random to avoid InfoNCE having no negatives.
                 pool = non_history_items if non_history_items else all_items_list
                 bpr_sampled = list(np.random.choice(pool, size=num_cl_neg, replace=True))
 
         combined = rand_sampled + bpr_sampled
-        if len(combined) < num_cl_neg:   # fallback
+        if len(combined) < num_cl_neg:
             combined.extend(list(np.random.choice(all_items_list,
                                size=(num_cl_neg - len(combined)), replace=True)))
         cl_neg_items[user] = torch.tensor(combined[:num_cl_neg], dtype=torch.long, device=device)

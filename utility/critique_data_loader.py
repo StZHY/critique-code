@@ -24,12 +24,10 @@ class Data(object):
         self.unique_test_users,  self.test_users,  self.test_items,  self.test_pos_len,  self.test_num_inter,  self.test_dict = self.read_file(test_path)
         assert len(self.train_users) == len(self.train_items)
 
-        # IDs are 0-indexed, so max ID + 1 gives the count
         self.num_users += 1
         self.num_items += 1
         self.num_nodes = self.num_users + self.num_items
 
-        # Build the user-item interaction matrix (U*I) in COO format
         self.train_mat = sp.coo_matrix((np.ones(len(self.train_users)), (self.train_users, self.train_items)), shape=[self.num_users, self.num_items])
         self.test_mat  = sp.coo_matrix((np.ones(len(self.test_users)),  (self.test_users,  self.test_items)),   shape=[self.num_users, self.num_items])
 
@@ -45,7 +43,7 @@ class Data(object):
             while line is not None and line != "":
                 temp = line.strip()
                 arr = [int(i) for i in temp.split(" ")]
-                user_id, pos_id = arr[0], arr[1:] # first column is user_id, rest are item ids
+                user_id, pos_id = arr[0], arr[1:]
 
                 self.num_users = max(self.num_users, user_id)
                 self.num_items = max(self.num_items, max(pos_id))
@@ -68,9 +66,7 @@ class Data(object):
         return np.array(unique_user), np.array(inter_users), np.array(inter_items), pos_length, num_inter, user_dict
 
     def load_critique_data(self, round_num):
-        # critique_round dir: prefer args.critique_round_path, else fall back to dataset dir/critique_round/.
         critique_dir = getattr(self.args, 'critique_round_path', None) or (self.path + "/critique_round")
-        # dislike anchor -> test_{r}_neg.txt; like anchor -> test_{r}_pos.txt
         neg_train_path = os.path.join(critique_dir, "test_" + round_num + "_neg" + self.filetype)
         neg_train_score_path = os.path.join(critique_dir, "test_" + round_num + "_neg_scores" + self.filetype)
         pos_train_path = os.path.join(critique_dir, "test_" + round_num + "_pos" + self.filetype)
@@ -80,8 +76,7 @@ class Data(object):
         self.pos_train_users, self.pos_train_items, self.pos_train_dict = self.read_critique_file(pos_train_path, pos_train_score_path, "pos")
 
     def read_critique_file(self, id_file_name, score_file_name, tag="neg"):
-        """Generic critique reader (neg/pos share one format: user_id item1 item2 ... / user_id score1 score2 ...).
-        tag selects the dict keys: 'neg' -> {neg_ids,neg_scores}; 'pos' -> {pos_ids,pos_scores}. Missing files => empty."""
+        """Generic critique reader (neg/pos share one format); tag selects dict keys, missing files => empty."""
         id_key = tag + "_ids"
         sc_key = tag + "_scores"
         inter_users, inter_items, user_dict = [], [], {}
@@ -101,11 +96,11 @@ class Data(object):
                 ids = [int(i) for i in id_parts[1:]]
                 score_parts = score_line.strip().split(" ")
                 if int(score_parts[0]) != user_id:
-                    print(f"警告: 用户ID在ID文件和得分文件中不匹配，用户ID: {user_id}")
+                    print(f"Warning: user ID mismatch between ID file and score file, user ID: {user_id}")
                     continue
                 scores = [float(s) for s in score_parts[1:]]
                 if len(ids) != len(scores):
-                    print(f"警告: 用户 {user_id} 的物品ID和得分数量不匹配，跳过。")
+                    print(f"Warning: item IDs and scores count mismatch for user {user_id}, skipping.")
                     continue
                 inter_users.extend([user_id] * len(ids))
                 inter_items.extend(ids)
@@ -133,12 +128,12 @@ class Data(object):
 
                 score_parts = score_line.strip().split(" ")
                 if int(score_parts[0]) != user_id:
-                    print(f"警告: 用户ID在ID文件和得分文件中不匹配，用户ID: {user_id}")
+                    print(f"Warning: user ID mismatch between ID file and score file, user ID: {user_id}")
                     continue
                 neg_scores = [float(s) for s in score_parts[1:]]
 
                 if len(neg_ids) != len(neg_scores):
-                    print(f"警告: 用户 {user_id} 的电影ID和得分数量不匹配，跳过。")
+                    print(f"Warning: movie IDs and scores count mismatch for user {user_id}, skipping.")
                     continue
 
                 inter_users.extend([user_id] * len(neg_ids))
@@ -183,9 +178,7 @@ class Data(object):
         return np.array(pairs)
 
     def create_u_pos_pairs(self):
-        """Generate (user, CL positive anchor) pairs for all users participating this round.
-        Round participants = neg_train_dict | pos_train_dict (a user is in exactly one per round).
-        CL positive anchor = user_id + num_items (mean of the user's train-positive item embeddings)."""
+        """Generate (user, CL positive anchor = user_id + num_items) pairs for all round participants."""
         hybrid_pairs = []
         pos_dict = getattr(self, 'pos_train_dict', {})
         user_set = set(self.neg_train_dict.keys()) | set(pos_dict.keys())
@@ -250,11 +243,9 @@ class Data(object):
             adjacency_matrix[:self.num_users, self.num_users:] = R
             adjacency_matrix[self.num_users:, :self.num_users] = R.T
 
-            # add self
             adjacency_matrix = adjacency_matrix.todok()
             adjacency_matrix = adjacency_matrix + sp.eye(adjacency_matrix.shape[0])
 
-            # A_hat = D^(-1/2) A D(-1/2)
             row_sum = np.array(adjacency_matrix.sum(axis=1))
             d_inv = np.power(row_sum, -0.5).flatten()
             d_inv[np.isinf(d_inv)] = 0.
@@ -286,7 +277,6 @@ class Data(object):
         temp = []
         count = 1
         fold = 3
-#         fold = 4
         n_count = self.train_num_inter + self.test_num_inter
         n_rates = 0
         split_state = []
@@ -313,7 +303,6 @@ class Data(object):
 
         return split_uids, split_state
     def get_user_pos_items(self, users):
-        # CSR format enables fast per-row access to a user's interacted items.
         self.train_mat_csr = self.train_mat.tocsr()
         positive_items = []
         for user in users:

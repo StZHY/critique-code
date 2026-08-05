@@ -1,13 +1,4 @@
-# -*- coding: utf-8 -*-
-"""Generate the personalized CF-guided candidate domain C_u with the FROZEN backbone.
-
-Major steps:
-  1. Load the frozen LightCCF backbone and the per-user critique set.
-  2. For each critique user, score all items via the backbone, drop the user history
-     (train positives, and optionally test positives) and keep the top-N as C_u.
-  3. Map each candidate item id to its title and write prepare_for_LLM/top_recommendations.json
-     = {str(uid): ["id::title", ...]}, the constrained pool the LLM is allowed to choose from.
-"""
+"""Generate the personalized CF-guided candidate domain C_u with the frozen backbone; writes prepare_for_LLM/top_recommendations.json."""
 import os
 import sys
 import json
@@ -24,15 +15,11 @@ import utility.data_loader as data_loader
 from LightCCF import Trainer
 
 DATA_DIR = os.path.join(PROJ, "dataset/amazon-book-82p")
-# path to the original dataset file processed_Amazonbooks.dat (NOT included in this repo)
 TITLE_FILE = os.environ.get("TITLE_FILE", "processed_Amazonbooks.dat")
-# critique user source / output / pool size are env-overridable (alongside TOP_N)
 CRITIQUE_JSON = os.environ.get(
     "CRITIQUE_JSON", os.path.join(PROJ, "prepare_for_LLM/user_test_critique_with_keyphrase.json"))
 OUT = os.environ.get("OUT", os.path.join(PROJ, "prepare_for_LLM/top_recommendations.json"))
 TOP_N = int(os.environ.get("TOP_N", "200"))
-# KEEP_TEST=1 -> candidate pool excludes only train history, so test positives may be ranked in.
-# default 0 = legacy behavior (exclude train ∪ test).
 KEEP_TEST = os.environ.get("KEEP_TEST", "0") == "1"
 
 
@@ -82,7 +69,7 @@ def main():
         hist = set(dataset.all_positive[uid])
         test_pos = set(dataset.test_dict.get(uid, []))
         if not KEEP_TEST:
-            hist = hist | test_pos   # legacy: also exclude test
+            hist = hist | test_pos
         with torch.no_grad():
             pred = model.get_rating_for_test(torch.tensor([uid], device=device)).squeeze(0).cpu().numpy()
         order = np.argsort(-pred)

@@ -1,24 +1,4 @@
-# -*- coding: utf-8 -*-
-"""Assemble the LLM evidence into per-round negative-only critique files.
-
-This is the main (negative-only) critique protocol. Per user, round r is the pool anchored on
-the user's r-th top dislike anchor; the anchor is forced at index 0 and the LLM-generated
-dislike candidates (already produced over the constrained pool) follow, deduped and
-whitelist-filtered.
-
-Major steps:
-  1. Read the dislike anchors, the LLM candidate suggestions and the pool whitelist.
-  2. For each round r in 0..num_rounds-1 and each user with an r-th anchor, build
-     items = [anchor] + filtered candidates and scores = [1.0] + candidate scores.
-  3. Write dataset/.../critique_round_negonly_top20/test_{r}_neg.txt and
-     test_{r}_neg_scores.txt, the files consumed by utility/critique_data_loader.py.
-
-Input files (under prepare_for_LLM/):
-  top20_neg_anchors_gcn2.json   {user: [dislike anchor {book_id, rank, ...}]}
-  batch_llm_neg_gcn2_full.json  {user: {book_id: ["id::title::score"]}}
-  top_recommendations_gcn2_100.json  {user: ["id::title"]}  pool whitelist (defensive filter)
-Line format: "{user} {item0} {item1} ..." / "{user} {score0} {score1} ..."
-"""
+"""Assemble LLM evidence into per-round negative-only critique files (test_{r}_neg.txt + _scores) consumed by critique_data_loader."""
 import os
 import json
 import argparse
@@ -61,7 +41,6 @@ def main():
     print(f"read pool whitelist: {args.pool}")
     pool = json.load(open(args.pool, encoding="utf-8"))
 
-    # pool whitelist (defensive: candidates must be inside the pool)
     pool_ids = {}
     for u, lst in pool.items():
         pool_ids[str(u)] = set(int(e.split("::")[0]) for e in lst if "::" in e)
@@ -74,10 +53,9 @@ def main():
         for u in sorted(anchors.keys(), key=lambda x: int(x)):
             arecs = anchors[u]
             if r >= len(arecs):
-                continue  # this user has no r-th anchor -> no negatives this round
+                continue
             bid = arecs[r]["book_id"]
             whitelist = pool_ids.get(u, set())
-            # candidates: parse + dedup + exclude anchor + pool-whitelist filter
             seen = {bid}
             cand_items = []
             cand_scores = []
@@ -94,7 +72,6 @@ def main():
                 seen.add(cid)
                 cand_items.append(cid)
                 cand_scores.append(cscore)
-            # anchor at idx0 (force_neg_anchor), score=1.0 (forced; score not used in importance sampling)
             items = [bid] + cand_items
             scores = [1.0] + cand_scores
             if not cand_items:

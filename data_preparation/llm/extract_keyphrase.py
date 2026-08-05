@@ -1,17 +1,4 @@
-# -*- coding: utf-8 -*-
-"""LLM job 1: extract critique keyphrases from each anchor's review (dual like/dislike prompts).
-
-For each anchor in prepare_for_LLM/user_test_critique.json (carrying type, title, overall,
-reviewText) the LLM extracts 1-3 keyphrases capturing WHY the reader liked/disliked the book.
-Dislike anchors use the dislike prompt; like anchors use the like prompt. The result is written
-to prepare_for_LLM/user_test_critique_with_keyphrase.json (each record gains "keyphrases").
-
-Major steps:
-  1. Load the critique json and any previous output (checkpoint resume, keyed by (user, anchor)).
-  2. Build the (user, anchor) tasks still missing, run them on a thread pool with retries.
-  3. Parse the strict-JSON model reply into a list of keyphrases and persist periodically.
-This script calls an LLM API over stdlib urllib only.
-"""
+"""LLM job 1: extract 1-3 critique keyphrases per anchor via dual like/dislike prompts; writes user_test_critique_with_keyphrase.json."""
 import json
 import os
 import re
@@ -28,8 +15,6 @@ try:
 except Exception:
     pass
 
-# This script calls an LLM API. Use any OpenAI-compatible chat completions service.
-# Configure the model and endpoint via environment variables LLM_MODEL and LLM_URL.
 LLM_URL = os.environ.get("LLM_URL", "http://your-llm-endpoint/v1/chat/completions")
 LLM_MODEL = os.environ.get("LLM_MODEL", "llm-model")
 
@@ -91,7 +76,6 @@ def call_llm(title, overall, review, typ, max_retries=3):
     }).encode()
     for attempt in range(max_retries):
         try:
-            # LLM API call
             req = urllib.request.Request(LLM_URL, data=body,
                                          headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=200) as resp:
@@ -111,8 +95,8 @@ def call_llm(title, overall, review, typ, max_retries=3):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in_file", default=IN, help="input critique json (each anchor has type/title/reviewText)")
-    ap.add_argument("--out", default=OUT, help="output json (each anchor gains keyphrases)")
+    ap.add_argument("--in_file", default=IN)
+    ap.add_argument("--out", default=OUT)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--workers", type=int, default=16)
     args = ap.parse_args()
@@ -123,8 +107,7 @@ def main():
     if args.limit:
         user_keys = user_keys[:args.limit]
 
-    # checkpoint resume
-    done = {}  # (user, anchor_idx) -> keyphrases
+    done = {}
     if os.path.exists(out_path):
         try:
             prev = json.load(open(out_path, encoding="utf-8"))

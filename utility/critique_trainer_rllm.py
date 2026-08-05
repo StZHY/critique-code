@@ -10,12 +10,10 @@ import datetime
 
 
 def critique_training(critique_model, args, dataset, device, logger):
-    """Critique training (residual-LLM): critique_round_num rounds x critique_epoch epochs per round.
-    Each round loads critique data, samples neg/pos items + the unified sign-coded pool, and trains."""
+    """Critique training (residual-LLM): critique_round_num rounds x critique_epoch epochs per round."""
     critique_model.to(device)
 
     incr_gate = getattr(args, 'integ_incremental_gate', False)
-    # Incremental gating: baseline = ungated pure backbone (d[0] = backbone N@5).
     if incr_gate and hasattr(critique_model, 'set_active_round'):
         critique_model.set_active_round(None)
 
@@ -46,7 +44,6 @@ def critique_training(critique_model, args, dataset, device, logger):
 
         dataset.load_critique_data(str(round_num))
 
-        # Incremental gating: round r eval uses rounds 0..r accumulated FP demotion.
         if incr_gate and hasattr(critique_model, 'set_active_round'):
             critique_model.set_active_round(round_num)
 
@@ -59,9 +56,7 @@ def critique_training(critique_model, args, dataset, device, logger):
         bpr_neg_items, sampled_neg_items = cri_sample.weight_sample_bpr_neg_items(critique_model, args, dataset, device)
         pos_cand_items = cri_sample.sample_pos_items(critique_model, args, dataset, device)
         pos_pool_ids, pos_pool_scores = cri_sample.sample_pos_pool(args, dataset, device)
-        # residual-LLM unified sign-coded pool (pos|neg, pos+score / neg-score).
         cri_pool_ids, cri_pool_scores = cri_sample.sample_critique_pool(args, dataset, device)
-        # s_L-margin CER B- pool (sampled only when use_cer_margin, to stay byte-identical otherwise).
         if getattr(args, 'use_cer_margin', False):
             cer_ids, cer_g = cri_sample.sample_cri_neg_cl(args, dataset, device)
             critique_model.set_cri_neg_cl(cer_ids, cer_g)
@@ -93,7 +88,7 @@ def critique_training(critique_model, args, dataset, device, logger):
         pos_users_set = set(getattr(dataset, 'pos_train_dict', {}).keys())
         neg_mask = torch.tensor([1.0 if int(u) in neg_users_set else 0.0 for u in users.tolist()], device=device)
         pos_mask = torch.tensor([1.0 if int(u) in pos_users_set else 0.0 for u in users.tolist()], device=device)
-        logger.info(f"\t Round {round_num}: 参与用户 {len(users)} (neg={int(neg_mask.sum().item())} / pos={int(pos_mask.sum().item())}) | rllm={args.rllm_mode} λ={args.rllm_lambda}")
+        logger.info(f"\t Round {round_num}: participating users {len(users)} (neg={int(neg_mask.sum().item())} / pos={int(pos_mask.sum().item())}) | rllm={args.rllm_mode} λ={args.rllm_lambda}")
 
         cnt = 0
         use_gate = neg_gate is not None
@@ -128,8 +123,6 @@ def critique_training(critique_model, args, dataset, device, logger):
                                            pos_pool_ids, pos_pool_scores, cri_pool_ids, cri_pool_scores,
                                            neg_mask, pos_mask, batch_size=int(args.train_batch_size))
             for batch in batches:
-                # Fixed order: user, pos, bpr_neg, cl_neg, pos_cand, pos_pool_ids, pos_pool_scores,
-                #          cri_pool_ids, cri_pool_scores, neg_mask, pos_mask, [neg_gate]
                 batch_user, batch_pos, batch_bpr_neg, batch_cl_neg, batch_pos_cand, \
                     batch_pos_pool_ids, batch_pos_pool_scores, batch_cri_pool_ids, batch_cri_pool_scores, \
                     batch_neg_mask, batch_pos_mask = batch[:11]
@@ -189,7 +182,7 @@ def critique_training(critique_model, args, dataset, device, logger):
 
     round_metrics_path = f"results/round_metrics_{log_tag}.json"
     json.dump(round_metrics, open(round_metrics_path, "w", encoding="utf-8"), indent=2)
-    print(f"\t Round metrics saved to {round_metrics_path} ({len(round_metrics)} 轮含 baseline)")
+    print(f"\t Round metrics saved to {round_metrics_path} ({len(round_metrics)} rounds including baseline)")
     logger.info(f"\t Round metrics saved to {round_metrics_path}")
     for rm in round_metrics:
         print("\t round=%s | R@5/10/20=%.4f/%.4f/%.4f | ndcg@5/10/20=%.4f/%.4f/%.4f" %

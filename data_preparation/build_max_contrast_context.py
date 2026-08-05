@@ -1,18 +1,4 @@
-# -*- coding: utf-8 -*-
-"""Build the per-anchor critique context with the MAXIMUM-CONTRAST comparison pair.
-
-Critique source = the TEST holdout (no leakage). Each user's test likes (>=4) and dislikes
-(<=2) become critique anchors, taken in ascending time order as rounds 0..num_rounds-1.
-
-Major steps:
-  1. Bucket each user's interactions into test_like / test_dislike (anchor candidates, with
-     review text) and all_like / all_dislike (comparison pool, id+time only).
-  2. Load the frozen backbone item_embedding.weight.
-  3. For each anchor pick the two opposite-polarity comparison items that MAXIMIZE the triangle
-     perimeter S = d(anchor,pi) + d(anchor,pj) + d(pi,pj) (sharpest like/dislike decision boundary).
-  4. Write prepare_for_LLM/user_test_critique.json: per user a list of anchors carrying type,
-     book_id, title, overall, reviewText, time and the contrast pair (ids + titles).
-"""
+"""Build per-anchor critique context with the MAXIMUM-CONTRAST comparison pair from the TEST holdout; writes prepare_for_LLM/user_test_critique.json."""
 import json
 import os
 import argparse
@@ -25,7 +11,6 @@ import torch
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJ, "dataset/amazon-book-82p")
 INTER = os.path.join(DATA_DIR, "interactions.jsonl")
-# path to the original dataset file processed_Amazonbooks.dat (NOT included in this repo)
 TITLE_FILE = os.environ.get("TITLE_FILE", "processed_Amazonbooks.dat")
 PTH = os.path.join(PROJ, "model_save/best_model_LightCCF.pth")
 OUT_DIR = os.path.join(PROJ, "prepare_for_LLM")
@@ -46,8 +31,7 @@ def load_title_map(path):
 
 
 def load_interactions(path):
-    """Bucket each user: test_like/test_dislike carry review (anchor candidates);
-    all_like/all_dislike carry id+time only (comparison pool)."""
+    """Bucket each user: test_like/test_dislike carry review (anchor candidates); all_like/all_dislike carry id+time (comparison pool)."""
     users = defaultdict(lambda: {"test_like": [], "test_dislike": [],
                                  "all_like": [], "all_dislike": []})
     with open(path, "r", encoding="utf-8") as f:
@@ -72,9 +56,7 @@ def load_item_embedding(pth_path):
 
 
 def find_best_pair(anchor_vec, pool_ids, pool_mat, cap=80):
-    """Pick 2 pool items that MAXIMIZE the triangle perimeter
-    S = d(anchor,pi) + d(anchor,pj) + d(pi,pj). For a large pool, first keep the `cap` items
-    farthest from the anchor, then scan all pairs for the max perimeter; for a small pool scan all."""
+    """Pick 2 pool items that MAXIMIZE the triangle perimeter S=d(a,pi)+d(a,pj)+d(pi,pj) (sharpest decision boundary)."""
     if len(pool_ids) < 2:
         return None
     d_anc = np.linalg.norm(pool_mat - anchor_vec, axis=1)
@@ -95,14 +77,13 @@ def find_best_pair(anchor_vec, pool_ids, pool_mat, cap=80):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--num_rounds", type=int, default=5, help="max anchors per user = rounds")
+    ap.add_argument("--num_rounds", type=int, default=5)
     ap.add_argument("--cap", type=int, default=80)
-    ap.add_argument("--data_dir", default=DATA_DIR, help="dataset dir (with interactions.jsonl)")
-    ap.add_argument("--title_file", default=TITLE_FILE,
-                    help="original processed_Amazonbooks.dat (NOT included in this repo)")
-    ap.add_argument("--out", default=OUT, help="output json path")
-    ap.add_argument("--pth", default=PTH, help="backbone weights (uses item_embedding.weight)")
-    ap.add_argument("--limit", type=int, default=0, help="only first N users (by user_id asc, 0=all)")
+    ap.add_argument("--data_dir", default=DATA_DIR)
+    ap.add_argument("--title_file", default=TITLE_FILE)
+    ap.add_argument("--out", default=OUT)
+    ap.add_argument("--pth", default=PTH)
+    ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
 
     inter = os.path.join(args.data_dir, "interactions.jsonl")
@@ -131,7 +112,6 @@ def main():
         print(f"  limit={args.limit}: processing first {len(keys)} users")
     for u in keys:
         d = users[u]
-        # anchor candidates: test_like + test_dislike, tagged, ascending by time
         cand = []
         for (it, ov, rt, t) in d["test_like"]:
             cand.append((t, "like", it, ov, rt))
@@ -143,7 +123,6 @@ def main():
             n_skip += 1
             continue
 
-        # comparison pool (dedup + bound id < emb rows + drop the anchors themselves)
         anchor_ids = {a[2] for a in anchors}
         like_pool = [it for (it, _t) in d["all_like"] if it not in anchor_ids and it < item_emb.shape[0]]
         like_pool = list(dict.fromkeys(like_pool))
@@ -156,9 +135,9 @@ def main():
         for (_t, typ, it, ov, rt) in anchors:
             anchor_vec = item_emb[it]
             if typ == "dislike":
-                pool_ids, pool_mat = like_pool, like_mat       # dislike anchor -> liked pool
+                pool_ids, pool_mat = like_pool, like_mat
             else:
-                pool_ids, pool_mat = dislike_pool, dislike_mat  # like anchor -> disliked pool
+                pool_ids, pool_mat = dislike_pool, dislike_mat
             pair = find_best_pair(anchor_vec, pool_ids, pool_mat, args.cap) if pool_ids is not None else None
             if pair is None:
                 cids, citems = [], []

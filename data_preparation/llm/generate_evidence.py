@@ -1,19 +1,4 @@
-# -*- coding: utf-8 -*-
-"""LLM job 2: critique-conditioned candidate-evidence generation over the constrained pool.
-
-Given the maximum-contrast critique context, the LLM can only choose from the backbone
-candidate domain (top_recommendations.json, "id::title"). For each anchor it returns the books
-the user might also dislike (dislike anchor) or also like (like anchor), scored by probability.
-Positive and negative anchors are handled symmetrically.
-
-Major steps:
-  1. Read the constrained pool, the keyphrased critique file and any previous output (resume).
-  2. For every (user, anchor) build a system prompt (the constrained <BookList>) and a user
-     prompt (anchor id/title, critique keyphrases, two contrast books) and call the LLM.
-  3. Parse the strict-JSON reply {book_id: ["id::title::score", ...]} and persist periodically.
-Output: prepare_for_LLM/batch_llm_cri_suggestions.json = {user_id: {str(book_id): [...] | None}}.
-This script calls an LLM API over stdlib urllib only.
-"""
+"""LLM job 2: critique-conditioned candidate-evidence generation over the constrained pool; writes batch_llm_cri_suggestions.json."""
 import os
 import sys
 import json
@@ -29,21 +14,18 @@ try:
 except Exception:
     pass
 
-# This script calls an LLM API. Use any OpenAI-compatible chat completions service.
-# Configure the model and endpoint via environment variables LLM_MODEL and LLM_URL.
 LLM_URL = os.environ.get("LLM_URL", "http://your-llm-endpoint/v1/chat/completions")
 LLM_MODEL = os.environ.get("LLM_MODEL", "llm-model")
 
 PROJ = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(PROJ)
 
-# ---------- config ----------
 WORKERS = 16
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 TEMPERATURE = 0.7
 MAX_TOKENS = 2048
-SUGGEST_AT_LEAST = int(os.environ.get("SUGGEST_N", "20"))   # env override: wider-net via SUGGEST_N=40
+SUGGEST_AT_LEAST = int(os.environ.get("SUGGEST_N", "20"))
 PROGRESS_EVERY = 200
 
 POOL_FILE = os.path.join(PROJ, "prepare_for_LLM/top_recommendations.json")
@@ -51,7 +33,6 @@ CRITIQUE_FILE = os.path.join(PROJ, "prepare_for_LLM/user_test_critique_with_keyp
 OUTPUT_FILE = os.path.join(PROJ, "prepare_for_LLM/batch_llm_cri_suggestions.json")
 
 
-# ---------- prompts (constrained pool + Amazon book + positive/negative symmetric) ----------
 def build_system_prompt(book_list_str, typ):
     polarity = "dislike" if typ == "dislike" else "like"
     return f"""You are a book critic and an expert on a large Amazon book catalog.
@@ -133,7 +114,6 @@ def call_llm(messages, max_retries=MAX_RETRIES):
     last_err = None
     for attempt in range(max_retries):
         try:
-            # LLM API call
             req = urllib.request.Request(LLM_URL, data=body,
                                          headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=300) as resp:
@@ -144,7 +124,7 @@ def call_llm(messages, max_retries=MAX_RETRIES):
                 return data
             last_err = "JSON parse failed"
         except urllib.error.HTTPError as e:
-            if e.code < 500:          # do not retry on 4xx
+            if e.code < 500:
                 return None
             last_err = e
         except Exception as e:
@@ -167,7 +147,7 @@ def main():
     ap.add_argument('--critique_file', default=CRITIQUE_FILE)
     ap.add_argument('--output_file', default=OUTPUT_FILE)
     ap.add_argument('--workers', type=int, default=WORKERS)
-    ap.add_argument('--limit', type=int, default=0, help='only first N users (0=all)')
+    ap.add_argument('--limit', type=int, default=0)
     args = ap.parse_args()
 
     t0 = time.time()
@@ -180,7 +160,6 @@ def main():
     if args.limit:
         user_keys = user_keys[:args.limit]
 
-    # --- checkpoint resume, keyed by (user, book_id) ---
     out_data = {u: {} for u in user_keys}
     done = set()
     if os.path.exists(args.output_file):
@@ -195,7 +174,6 @@ def main():
         except Exception:
             pass
 
-    # --- build tasks ---
     tasks = []
     skipped = 0
     no_pool = 0

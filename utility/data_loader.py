@@ -22,7 +22,6 @@ class Data(object):
 
         self.unique_train_users, self.train_users, self.train_items, self.train_pos_len, self.train_num_inter, self.train_dict = self.read_file(train_path)
         self.unique_test_users,  self.test_users,  self.test_items,  self.test_pos_len,  self.test_num_inter,  self.test_dict = self.read_file(test_path)
-        # optional val split for early stopping (falls back to test if absent)
         val_path = self.path + "/val" + self.filetype
         if os.path.exists(val_path):
             (self.unique_val_users, self.val_users, self.val_items,
@@ -34,12 +33,10 @@ class Data(object):
             self.val_users = []
         assert len(self.train_users) == len(self.train_items)
 
-        # IDs are 0-indexed, so the count is max ID + 1
         self.num_users += 1
         self.num_items += 1
         self.num_nodes = self.num_users + self.num_items
 
-        # build the user-item interaction matrix (U x I) in COO format
         self.train_mat = sp.coo_matrix((np.ones(len(self.train_users)), (self.train_users, self.train_items)), shape=[self.num_users, self.num_items])
         self.test_mat  = sp.coo_matrix((np.ones(len(self.test_users)),  (self.test_users,  self.test_items)),   shape=[self.num_users, self.num_items])
 
@@ -54,7 +51,7 @@ class Data(object):
             while line is not None and line != "":
                 temp = line.strip()
                 arr = [int(i) for i in temp.split(" ")]
-                user_id, pos_id = arr[0], arr[1:]  # first column is user id, rest are positive items
+                user_id, pos_id = arr[0], arr[1:]
 
                 self.num_users = max(self.num_users, user_id)
                 self.num_items = max(self.num_items, max(pos_id))
@@ -145,11 +142,9 @@ class Data(object):
             adjacency_matrix[:self.num_users, self.num_users:] = R
             adjacency_matrix[self.num_users:, :self.num_users] = R.T
 
-            # add self-loops
             adjacency_matrix = adjacency_matrix.todok()
             adjacency_matrix = adjacency_matrix + sp.eye(adjacency_matrix.shape[0])
 
-            # A_hat = D^(-1/2) A D^(-1/2)
             row_sum = np.array(adjacency_matrix.sum(axis=1))
             d_inv = np.power(row_sum, -0.5).flatten()
             d_inv[np.isinf(d_inv)] = 0.
@@ -207,7 +202,6 @@ class Data(object):
 
         return split_uids, split_state
     def get_user_pos_items(self, users):
-        # CSR format enables fast row-based access to each user's interacted items
         self.train_mat_csr = self.train_mat.tocsr()
         positive_items = []
         for user in users:

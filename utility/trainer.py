@@ -12,7 +12,6 @@ def training(model, args, dataset, device, logger):
     best_recall_epoch, best_recall_1, best_ndcg_1 = 0, 0, 0
     cnt = 0
 
-    # checkpoint name: --save_name overrides (isolates coexisting backbones); default keeps legacy path
     save_stem = getattr(args, 'save_name', None) or f"best_model_{model.model_name}"
     model_save_path = f"model_save/{save_stem}.pth"
 
@@ -69,7 +68,6 @@ def training(model, args, dataset, device, logger):
             if int(args.sparsity_test) == 0:
                 metric = getattr(args, 'early_stop_metric', 'recall10')
                 if metric == 'train_ndcg5':
-                    # 8:2 split: early-stop on train ndcg@5, monitor test for overfitting
                     train_res = tester.testing_on(model, args, dataset, device,
                                                   dataset.train_dict, None, tag="train-ndcg5")
                     test_res = tester.testing_on(model, args, dataset, device,
@@ -79,8 +77,8 @@ def training(model, args, dataset, device, logger):
                     if tr_ndcg5 > best_ndcg_1:
                         cnt = 0
                         best_recall_epoch = epoch + 1
-                        best_ndcg_1 = tr_ndcg5                        # best train ndcg@5
-                        best_recall_1 = float(test_res['recall'][1])  # test R@10 at that epoch (recorded only)
+                        best_ndcg_1 = tr_ndcg5
+                        best_recall_1 = float(test_res['recall'][1])
                         torch.save(model.state_dict(), model_save_path)
                         print(f"\t [saved] epoch{epoch + 1} train_ndcg5={tr_ndcg5:.4f} "
                               f"(test R@10={best_recall_1:.4f})")
@@ -90,18 +88,16 @@ def training(model, args, dataset, device, logger):
                         print("\t train ndcg@5 plateaued -> early stop")
                         break
                 else:
-                    # legacy: recall@10 early stopping (val if available, else test)
                     if getattr(dataset, 'has_val', False):
                         model_results = tester.testing_on(model, args, dataset, device,
                                                           dataset.val_dict, dataset.train_dict, tag="val")
                     else:
                         model_results = tester.testing(model, args, dataset, device)
                     cnt += 1
-                    # resolve the tracked early-stop metric across recall{5,10,20}/ndcg{5,10,20}
                     _k2i = {'5': 0, '10': 1, '20': 2}
                     if metric.startswith('ndcg'):
                         _track_arr = model_results['ndcg']; _ki = metric[4:] or '10'
-                    else:  # recall* (default recall10 = R@10)
+                    else:
                         _track_arr = model_results['recall']; _ki = metric.replace('recall', '') or '10'
                     _track_idx = _k2i.get(_ki, 1)
                     _track_val = _track_arr[_track_idx]
@@ -136,10 +132,8 @@ def training(model, args, dataset, device, logger):
                 logger.info("\t level_2: recall:" + str(result[1]['recall']) + ',ndcg:' + str(result[1]['ndcg']))
                 logger.info("\t level_3: recall:" + str(result[2]['recall']) + ',ndcg:' + str(result[2]['ndcg']))
 
-    # after training: load best checkpoint for final test evaluation
     metric = getattr(args, 'early_stop_metric', 'recall10')
     if metric == 'train_ndcg5':
-        # load best (train ndcg@5 peak) and evaluate on test, excluding train positives
         if os.path.exists(model_save_path):
             model.load_state_dict(torch.load(model_save_path))
             print(f"\t Loaded best model (train ndcg@5 peak @epoch{best_recall_epoch}) for final test eval.")
@@ -149,7 +143,6 @@ def training(model, args, dataset, device, logger):
         best_recall_1 = float(test_results['recall'][1])
         best_ndcg_1 = float(test_results['ndcg'][1])
     elif getattr(dataset, 'has_val', False):
-        # stopped on val: load best and evaluate on test excluding train+val positives
         if os.path.exists(model_save_path):
             model.load_state_dict(torch.load(model_save_path))
             print(f"\t Loaded best model from {model_save_path} for final test eval.")
@@ -170,9 +163,6 @@ def training(model, args, dataset, device, logger):
     logger.info("\t best recall epoch:" + str(best_recall_epoch))
     logger.info("\t best recall:" + str(best_recall_1) + "\t best ndcg:" + str(best_ndcg_1))
 
-    """
-    save file to result folder
-    """
     current_time = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     result_folder = "results"
     if not os.path.exists(result_folder):
